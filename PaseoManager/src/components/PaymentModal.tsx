@@ -20,6 +20,7 @@ const PAYMENT_METHODS: PaymentMethod[] = [
   'Efectivo',
   'Transferencia Bancaria',
   'Tarjeta / Otro',
+  'NU',
 ];
 
 const FIXED_PRESETS = [50000, 100000, 150000, 200000, 300000];
