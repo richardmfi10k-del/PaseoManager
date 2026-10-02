@@ -57,20 +57,20 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(checkAdminSession);
   const [activeTab, setActiveTab] = useState<'public' | 'admin'>('public');
 
-  // Modals
+  // Modales
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   
-  // Selection state
+  // Selección y edición
   const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
   const [editingParticipant, setEditingParticipant] = useState<Participant | null>(null);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [initialPaymentParticipantId, setInitialPaymentParticipantId] = useState<string | null>(null);
 
-  // Toast notifications
+  // Notificaciones Toast
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
@@ -80,7 +80,7 @@ export default function App() {
     }, 3500);
   };
 
-  // Real-time Firestore synchronization
+  // Sincronización en tiempo real con Firestore
   useEffect(() => {
     const unsubscribe = subscribeToTripLive((live) => {
       if (live.settings) {
@@ -259,7 +259,7 @@ export default function App() {
   const handleResetData = async () => {
     resetAllData();
     await apiResetData();
-    showToast('Datos de ejemplo cargados.');
+    showToast('Datos restablecidos.');
   };
 
   const handleClearData = async () => {
@@ -336,11 +336,12 @@ export default function App() {
         </p>
       </footer>
 
-      {/* Modals */}
+      {/* Modales */}
       <AdminLoginModal
         isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
+        settings={settings}
         adminPassword={settings.adminPassword || 'admin'}
+        onClose={() => setIsLoginModalOpen(false)}
         onLoginSuccess={handleLoginSuccess}
       />
 
@@ -387,13 +388,13 @@ export default function App() {
         }}
       />
 
-      {/* Share Modal (Autónomo) */}
+      {/* Modal de Compartir */}
       {isShareModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 p-6 animate-in fade-in zoom-in-95 duration-200">
             <button
               onClick={() => setIsShareModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
