@@ -16,7 +16,8 @@ import {
   setAdminSession,
   resetAllData,
   clearData,
-  calculateFinancials
+  calculateFinancials,
+  importTripPayload,
 } from './utils/storage';
 import {
   fetchTripData,
@@ -29,6 +30,15 @@ import {
   apiClearData,
   apiSaveAll,
 } from './utils/api';
+import {
+  subscribeToTripLive,
+  saveSettingsToFirestore,
+  saveParticipantToFirestore,
+  deleteParticipantFromFirestore,
+  savePaymentToFirestore,
+  deletePaymentFromFirestore,
+  clearFirestoreData,
+} from './utils/firebase';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { PublicBoard } from './components/PublicBoard';
@@ -38,6 +48,7 @@ import { AdminLoginModal } from './components/AdminLoginModal';
 import { PaymentModal } from './components/PaymentModal';
 import { ParticipantModal } from './components/ParticipantModal';
 import { TripSettingsModal } from './components/TripSettingsModal';
+import { ShareModal } from './components/ShareModal';
 import { Check, Info } from 'lucide-react';
 
 export default function App() {
@@ -47,45 +58,55 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(checkAdminSession);
   const [activeTab, setActiveTab] = useState<'public' | 'admin'>('public');
 
-  // Modals state
-  const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+  // Modals
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  
+  // Selection state
+  const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+  const [editingParticipant, setEditingParticipant] = useState<Participant | null>(null);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [initialPaymentParticipantId, setInitialPaymentParticipantId] = useState<string | null>(null);
-  const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
-  const [editingParticipant, setEditingParticipant] = useState<Participant | null>(null);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
-  // Toast feedback
+  // Toast notifications
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => {
+      setToast(null);
+    }, 3800);
   };
 
-  // Sync with backend API
-  const refreshFromBackend = useCallback(async () => {
-    const data = await fetchTripData();
-    if (data.settings) setSettings(data.settings);
-    if (data.participants) setParticipants(data.participants);
-    if (data.payments) setPayments(data.payments);
+  // Real-time Firestore synchronization
+  useEffect(() => {
+    const unsubscribe = subscribeToTripLive((live) => {
+      if (live.settings) {
+        setSettings(live.settings);
+        saveTripSettings(live.settings);
+      }
+      if (Array.isArray(live.participants)) {
+        setParticipants(live.participants);
+        saveParticipants(live.participants);
+      }
+      if (Array.isArray(live.payments)) {
+        setPayments(live.payments);
+        savePayments(live.payments);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    refreshFromBackend();
-    // Background polling every 6 seconds so travelers see organizer updates live
-    const interval = setInterval(refreshFromBackend, 6000);
-    return () => clearInterval(interval);
-  }, [refreshFromBackend]);
-
-  // Sync state changes with local & backend
   const updateSettings = async (newSettings: TripSettings) => {
     setSettings(newSettings);
     saveTripSettings(newSettings);
+    await saveSettingsToFirestore(newSettings);
     await apiSaveSettings(newSettings);
-    showToast('Configuración guardada correctamente.');
+    showToast('Configuración guardada en la nube.');
   };
 
   const updateParticipants = (newParticipants: Participant[]) => {
@@ -98,7 +119,6 @@ export default function App() {
     savePayments(newPayments);
   };
 
-  // Admin Auth Handlers
   const handleLoginSuccess = () => {
     setIsAdmin(true);
     setAdminSession(true);
@@ -114,7 +134,6 @@ export default function App() {
     showToast('Sesión cerrada.', 'info');
   };
 
-  // Participant Management
   const handleOpenAddParticipant = () => {
     setEditingParticipant(null);
     setIsParticipantModalOpen(true);
@@ -127,16 +146,17 @@ export default function App() {
 
   const handleSaveParticipant = async (data: Partial<Participant>) => {
     if (data.id) {
-      // Editing existing participant
       const updated = participants.map((p) =>
         p.id === data.id ? ({ ...p, ...data } as Participant) : p
       );
       updateParticipants(updated);
       const target = updated.find((p) => p.id === data.id);
-      if (target) await apiSaveParticipant(target);
+      if (target) {
+        await saveParticipantToFirestore(target);
+        await apiSaveParticipant(target);
+      }
       showToast('Datos del viajero actualizados.');
     } else {
-      // New participant
       const newPart: Participant = {
         id: `p-${Date.now()}`,
         name: data.name || '',
@@ -148,6 +168,7 @@ export default function App() {
         createdAt: new Date().toISOString(),
       };
       updateParticipants([...participants, newPart]);
+      await saveParticipantToFirestore(newPart);
       await apiSaveParticipant(newPart);
       showToast(`Viajero ${newPart.name} registrado con éxito.`);
     }
@@ -159,6 +180,7 @@ export default function App() {
     const updatedPays = payments.filter((p) => p.participantId !== participantId);
     updateParticipants(updatedParts);
     updatePayments(updatedPays);
+    await deleteParticipantFromFirestore(participantId);
     await apiDeleteParticipant(participantId);
     if (selectedParticipant?.id === participantId) {
       setSelectedParticipant(null);
@@ -166,7 +188,6 @@ export default function App() {
     showToast('Viajero y sus pagos eliminados.', 'info');
   };
 
-  // Payment Management
   const handleOpenAddPayment = (preselectedParticipant?: Participant) => {
     setEditingPayment(null);
     setInitialPaymentParticipantId(preselectedParticipant ? preselectedParticipant.id : null);
@@ -180,16 +201,17 @@ export default function App() {
 
   const handleSavePayment = async (data: Partial<Payment>) => {
     if (data.id) {
-      // Edit payment
       const updated = payments.map((p) =>
         p.id === data.id ? ({ ...p, ...data } as Payment) : p
       );
       updatePayments(updated);
       const target = updated.find((p) => p.id === data.id);
-      if (target) await apiSavePayment(target);
+      if (target) {
+        await savePaymentToFirestore(target);
+        await apiSavePayment(target);
+      }
       showToast('Abono modificado exitosamente.');
     } else {
-      // New payment
       const newPay: Payment = {
         id: `pay-${Date.now()}`,
         participantId: data.participantId || '',
@@ -203,9 +225,9 @@ export default function App() {
 
       const updated = [...payments, newPay];
       updatePayments(updated);
+      await savePaymentToFirestore(newPay);
       await apiSavePayment(newPay);
 
-      // Check if this payment completes the traveler's quota
       const traveler = participants.find((p) => p.id === newPay.participantId);
       if (traveler) {
         const fin = calculateFinancials(traveler, updated);
@@ -218,7 +240,7 @@ export default function App() {
           });
           showToast(`¡Abono registrado! ${traveler.name} quedó a paz y salvo 🎉`);
         } else {
-          showToast(`Abono de $${newPay.amount.toLocaleString('es-CO')} registrado a ${traveler.name}.`);
+          showToast(`Abono de $${newPay.amount.toLocaleString('es-CO')} registrado.`);
         }
       } else {
         showToast('Abono registrado con éxito.');
@@ -230,136 +252,99 @@ export default function App() {
   const handleDeletePayment = async (paymentId: string) => {
     const updated = payments.filter((p) => p.id !== paymentId);
     updatePayments(updated);
+    await deletePaymentFromFirestore(paymentId);
     await apiDeletePayment(paymentId);
     showToast('Abono eliminado.', 'info');
   };
 
-  // Reset / Clear Data
   const handleResetData = async () => {
     resetAllData();
     await apiResetData();
-    await refreshFromBackend();
     showToast('Datos de ejemplo cargados.');
   };
 
   const handleClearData = async () => {
     clearData();
-    await apiClearData();
     setParticipants([]);
     setPayments([]);
-    showToast('Todos los datos han sido vaciados.', 'info');
+    setSelectedParticipant(null);
+    await clearFirestoreData();
+    await apiClearData();
+    showToast('Todos los datos fueron borrados.', 'info');
   };
 
   const handleDataImported = async () => {
     const s = loadTripSettings();
     const parts = loadParticipants();
     const pays = loadPayments();
-    await apiSaveAll({ settings: s, participants: parts, payments: pays });
     setSettings(s);
     setParticipants(parts);
     setPayments(pays);
-    showToast('Datos importados y sincronizados con éxito.');
+    await saveSettingsToFirestore(s);
+    for (const p of parts) await saveParticipantToFirestore(p);
+    for (const y of pays) await savePaymentToFirestore(y);
+    showToast('Datos importados y sincronizados con la nube.');
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-emerald-100 selection:text-emerald-900">
-      {/* Toast Notification */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl border border-slate-800 flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-200">
-          <div className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-            {toast.type === 'success' ? <Check className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
-          </div>
-          <span className="text-xs sm:text-sm font-medium">{toast.message}</span>
-        </div>
-      )}
-
-      {/* Top Navbar */}
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       <Navbar
         settings={settings}
         isAdmin={isAdmin}
-        onOpenLogin={() => setIsLoginModalOpen(true)}
-        onLogout={handleLogout}
         activeTab={activeTab}
-        onChangeTab={setActiveTab}
+        onTabChange={setActiveTab}
+        onLoginClick={() => setIsLoginModalOpen(true)}
+        onLogoutClick={handleLogout}
+        onShareClick={() => setIsShareModalOpen(true)}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Hero Section with Global Stats */}
-        <HeroBanner
-          settings={settings}
-          participants={participants}
-          payments={payments}
-        />
+      <HeroBanner
+        settings={settings}
+        participants={participants}
+        payments={payments}
+        onShareClick={() => setIsShareModalOpen(true)}
+      />
 
-        {/* View Switcher: Public Board vs Admin Dashboard */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'public' ? (
           <PublicBoard
             settings={settings}
             participants={participants}
             payments={payments}
-            isAdmin={isAdmin}
-            onSelectParticipant={(p) => setSelectedParticipant(p)}
-            onQuickAddPayment={(p) => handleOpenAddPayment(p)}
+            onSelectParticipant={setSelectedParticipant}
           />
         ) : (
           <AdminDashboard
             settings={settings}
             participants={participants}
             payments={payments}
+            onOpenSettings={() => setIsSettingsModalOpen(true)}
             onOpenAddParticipant={handleOpenAddParticipant}
             onOpenEditParticipant={handleOpenEditParticipant}
             onDeleteParticipant={handleDeleteParticipant}
             onOpenAddPayment={handleOpenAddPayment}
-            onOpenSettings={() => setIsSettingsModalOpen(true)}
-            onSelectParticipant={(p) => setSelectedParticipant(p)}
+            onOpenEditPayment={handleOpenEditPayment}
+            onDeletePayment={handleDeletePayment}
+            onSelectParticipant={setSelectedParticipant}
           />
         )}
       </main>
 
-      {/* Modals */}
-      {/* 1. Participant Detail Modal */}
-      <ParticipantDetailModal
-        participant={selectedParticipant}
-        payments={payments}
-        settings={settings}
-        isAdmin={isAdmin}
-        onClose={() => setSelectedParticipant(null)}
-        onAddPaymentForParticipant={(p) => handleOpenAddPayment(p)}
-        onEditPayment={(pay) => handleOpenEditPayment(pay)}
-        onDeletePayment={handleDeletePayment}
-      />
+      <footer className="bg-slate-900 text-slate-400 py-8 border-t border-slate-800 text-center text-sm">
+        <p className="font-semibold text-slate-300">{settings.title}</p>
+        <p className="mt-1 text-slate-500">
+          Tablero de control de abonos en tiempo real · Sincronizado en la nube
+        </p>
+      </footer>
 
-      {/* 2. Admin Login Modal */}
+      {/* Modals */}
       <AdminLoginModal
         isOpen={isLoginModalOpen}
-        settings={settings}
         onClose={() => setIsLoginModalOpen(false)}
+        adminPassword={settings.adminPassword || 'admin'}
         onLoginSuccess={handleLoginSuccess}
       />
 
-      {/* 3. Payment Modal (Add / Edit) */}
-      <PaymentModal
-        isOpen={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
-        onSave={handleSavePayment}
-        participants={participants}
-        payments={payments}
-        settings={settings}
-        editingPayment={editingPayment}
-        initialParticipantId={initialPaymentParticipantId}
-      />
-
-      {/* 4. Participant Modal (Add / Edit) */}
-      <ParticipantModal
-        isOpen={isParticipantModalOpen}
-        onClose={() => setIsParticipantModalOpen(false)}
-        onSave={handleSaveParticipant}
-        editingParticipant={editingParticipant}
-        settings={settings}
-      />
-
-      {/* 5. Trip Settings Modal */}
       <TripSettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
@@ -372,17 +357,51 @@ export default function App() {
         onDataImported={handleDataImported}
       />
 
-      {/* Minimal Footer */}
-      <footer className="mt-auto border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p>
-            {settings.title} · Coordinado con <strong className="text-slate-700">PaseoManager</strong>
-          </p>
-          <div className="flex items-center gap-4 text-slate-400">
-            <span>Control centralizado y transparencia para todos los viajeros</span>
-          </div>
+      <ParticipantModal
+        isOpen={isParticipantModalOpen}
+        onClose={() => setIsParticipantModalOpen(false)}
+        participant={editingParticipant}
+        defaultQuota={participants[0]?.quota || 450000}
+        currency={settings.currency}
+        onSave={handleSaveParticipant}
+      />
+
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        payment={editingPayment}
+        participants={participants}
+        initialParticipantId={initialPaymentParticipantId}
+        currency={settings.currency}
+        onSave={handleSavePayment}
+      />
+
+      <ParticipantDetailModal
+        participant={selectedParticipant}
+        payments={payments}
+        settings={settings}
+        onClose={() => setSelectedParticipant(null)}
+        onAddPayment={() => {
+          const p = selectedParticipant;
+          setSelectedParticipant(null);
+          if (p) handleOpenAddPayment(p);
+        }}
+      />
+
+      <ShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        settings={settings}
+        participants={participants}
+        payments={payments}
+      />
+
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-xl text-white text-sm font-medium animate-bounce bg-emerald-600">
+          <Check className="w-5 h-5" />
+          <span>{toast.message}</span>
         </div>
-      </footer>
+      )}
     </div>
   );
 }
