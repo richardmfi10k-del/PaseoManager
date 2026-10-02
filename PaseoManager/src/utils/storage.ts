@@ -220,11 +220,14 @@ export function saveTripSettings(settings: TripSettings): void {
 export function loadParticipants(): Participant[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PARTICIPANTS);
-    if (!raw) return INITIAL_PARTICIPANTS;
+    if (raw === null) {
+      saveParticipants(INITIAL_PARTICIPANTS);
+      return INITIAL_PARTICIPANTS;
+    }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_PARTICIPANTS;
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return INITIAL_PARTICIPANTS;
+    return [];
   }
 }
 
@@ -239,11 +242,14 @@ export function saveParticipants(participants: Participant[]): void {
 export function loadPayments(): Payment[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PAYMENTS);
-    if (!raw) return INITIAL_PAYMENTS;
+    if (raw === null) {
+      savePayments(INITIAL_PAYMENTS);
+      return INITIAL_PAYMENTS;
+    }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : INITIAL_PAYMENTS;
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return INITIAL_PAYMENTS;
+    return [];
   }
 }
 
