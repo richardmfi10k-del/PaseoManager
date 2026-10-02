@@ -1,0 +1,8 @@
+{
+  "name": "PaseoManager",
+  "description": "Plataforma para organizar paseos y viajes grupales con tablero público de consulta de abonos y panel de administración protegido para control de pagos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
