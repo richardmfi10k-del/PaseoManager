@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { 
   TripSettings, 
@@ -17,7 +17,6 @@ import {
   resetAllData,
   clearData,
   calculateFinancials,
-  importTripPayload,
 } from './utils/storage';
 import {
   fetchTripData,
@@ -38,7 +37,6 @@ import {
   savePaymentToFirestore,
   deletePaymentFromFirestore,
   clearFirestoreData,
-  seedFirestoreIfEmpty,
 } from './utils/firebase';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
@@ -77,50 +75,8 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Check if opened via shared trip URL hash/query
-  useEffect(() => {
-    try {
-      const hash = window.location.hash;
-      const search = window.location.search;
-      let payload = '';
-
-      if (hash && hash.includes('trip=')) {
-        payload = hash.split('trip=')[1];
-      } else if (search && search.includes('trip=')) {
-        const params = new URLSearchParams(search);
-        payload = params.get('trip') || '';
-      }
-
-      if (payload) {
-        const imported = importTripPayload(payload);
-        if (imported) {
-          if (imported.settings) {
-            const merged = { ...loadTripSettings(), ...imported.settings };
-            setSettings(merged);
-            saveTripSettings(merged);
-            apiSaveSettings(merged);
-          }
-          if (Array.isArray(imported.participants)) {
-            setParticipants(imported.participants);
-            saveParticipants(imported.participants);
-          }
-          if (Array.isArray(imported.payments)) {
-            setPayments(imported.payments);
-            savePayments(imported.payments);
-          }
-          showToast('¡Datos del paseo cargados exitosamente!');
-          window.history.replaceState(null, '', window.location.pathname);
-        }
-      }
-    } catch (e) {
-      console.error('Error importing shared trip', e);
-    }
-  }, []);
-
   // Real-time Firestore synchronization
   useEffect(() => {
-    seedFirestoreIfEmpty();
-
     const unsubscribe = subscribeToTripLive((live) => {
       if (live.settings) {
         setSettings(live.settings);
@@ -303,7 +259,7 @@ export default function App() {
   const handleResetData = async () => {
     resetAllData();
     await apiResetData();
-    showToast('Datos de ejemplo cargados.');
+    showToast('Datos restablecidos.');
   };
 
   const handleClearData = async () => {
@@ -480,7 +436,7 @@ export default function App() {
                       navigator.clipboard.writeText(window.location.href);
                       showToast('¡Enlace copiado al portapapeles!');
                     }}
-                    className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center gap-1 shrink-0 transition-colors"
+                    className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
                   >
                     <Copy className="w-3.5 h-3.5" />
                     Copiar
@@ -493,7 +449,7 @@ export default function App() {
                   const text = encodeURIComponent(`¡Hola! Consulta el estado de tu cupo y abonos para "${settings.title}" en tiempo real aquí: ${window.location.href}`);
                   window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
                 }}
-                className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors"
+                className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
               >
                 <Share2 className="w-4 h-4" />
                 Compartir por WhatsApp
