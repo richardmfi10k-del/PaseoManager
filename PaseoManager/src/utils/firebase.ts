@@ -12,14 +12,16 @@ import {
 import { getAuth } from 'firebase/auth';
 import { Participant, Payment, TripSettings } from '../types';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   projectId: "sistema-de-pedidos-7f91f",
   appId: "1:611940942676:web:4d9a91ff2c69e811dabec1",
   apiKey: "AIzaSyA8nsDapmnCRbcC1391giFerUMeVQt0g74",
   authDomain: "sistema-de-pedidos-7f91f.firebaseapp.com",
   firestoreDatabaseId: "ai-studio-paseomanager-1e8bf4a1-6d12-4861-b8d6-ca4c53be76dc",
   storageBucket: "sistema-de-pedidos-7f91f.firebasestorage.app",
-  messagingSenderId: "611940942676"
+  messagingSenderId: "611940942676",
+  measurementId: "",
+  oAuthClientId: "611940942676-l6c42d1r8s6uqe94jb98imen0pbvg0e3.apps.googleusercontent.com",
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
