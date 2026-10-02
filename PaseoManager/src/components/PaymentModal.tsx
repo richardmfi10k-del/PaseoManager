@@ -40,7 +40,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
 
-  useEffect(() => {
+ useEffect(() => {
+    if (!isOpen) return;
+
     if (editingPayment) {
       setParticipantId(editingPayment.participantId);
       setAmount(editingPayment.amount);
@@ -58,7 +60,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setNotes('');
     }
     setError('');
-  }, [editingPayment, initialParticipantId, participants, isOpen]);
+  }, [isOpen, editingPayment, initialParticipantId]);
+
+  // Si los participantes cargan despues de abrir
+  useEffect(() => {
+    if (isOpen && !participantId && participants.length > 0 && !editingPayment) {
+      setParticipantId(initialParticipantId || participants[0].id);
+    }
+  }, [isOpen, participants.length, participantId, editingPayment, initialParticipantId]);
 
   if (!isOpen) return null;
 
