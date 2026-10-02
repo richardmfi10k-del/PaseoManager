@@ -38,6 +38,7 @@ import {
   savePaymentToFirestore,
   deletePaymentFromFirestore,
   clearFirestoreData,
+  seedFirestoreIfEmpty,
 } from './utils/firebase';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
@@ -57,31 +58,69 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(checkAdminSession);
   const [activeTab, setActiveTab] = useState<'public' | 'admin'>('public');
 
-  // Modales
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  
-  // Selección y edición
+  // Modals state
   const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
-  const [editingParticipant, setEditingParticipant] = useState<Participant | null>(null);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [initialPaymentParticipantId, setInitialPaymentParticipantId] = useState<string | null>(null);
+  const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
+  const [editingParticipant, setEditingParticipant] = useState<Participant | null>(null);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
-  // Notificaciones Toast
+  // Toast feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
     setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 3500);
+    setTimeout(() => setToast(null), 3000);
   };
 
-  // Sincronización en tiempo real con Firestore
+  // Check if opened via shared trip URL hash/query
   useEffect(() => {
+    try {
+      const hash = window.location.hash;
+      const search = window.location.search;
+      let payload = '';
+
+      if (hash && hash.includes('trip=')) {
+        payload = hash.split('trip=')[1];
+      } else if (search && search.includes('trip=')) {
+        const params = new URLSearchParams(search);
+        payload = params.get('trip') || '';
+      }
+
+      if (payload) {
+        const imported = importTripPayload(payload);
+        if (imported) {
+          if (imported.settings) {
+            const merged = { ...loadTripSettings(), ...imported.settings };
+            setSettings(merged);
+            saveTripSettings(merged);
+            apiSaveSettings(merged);
+          }
+          if (Array.isArray(imported.participants)) {
+            setParticipants(imported.participants);
+            saveParticipants(imported.participants);
+          }
+          if (Array.isArray(imported.payments)) {
+            setPayments(imported.payments);
+            savePayments(imported.payments);
+          }
+          showToast('¡Datos del paseo cargados exitosamente!');
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    } catch (e) {
+      console.error('Error importing shared trip', e);
+    }
+  }, []);
+
+  // Real-time Firestore synchronization
+  useEffect(() => {
+    seedFirestoreIfEmpty();
+
     const unsubscribe = subscribeToTripLive((live) => {
       if (live.settings) {
         setSettings(live.settings);
@@ -100,6 +139,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Sync state changes with local & backend
   const updateSettings = async (newSettings: TripSettings) => {
     setSettings(newSettings);
     saveTripSettings(newSettings);
@@ -118,6 +158,7 @@ export default function App() {
     savePayments(newPayments);
   };
 
+  // Admin Auth Handlers
   const handleLoginSuccess = () => {
     setIsAdmin(true);
     setAdminSession(true);
@@ -133,6 +174,7 @@ export default function App() {
     showToast('Sesión cerrada.', 'info');
   };
 
+  // Participant Management
   const handleOpenAddParticipant = () => {
     setEditingParticipant(null);
     setIsParticipantModalOpen(true);
@@ -187,6 +229,7 @@ export default function App() {
     showToast('Viajero y sus pagos eliminados.', 'info');
   };
 
+  // Payment Management
   const handleOpenAddPayment = (preselectedParticipant?: Participant) => {
     setEditingPayment(null);
     setInitialPaymentParticipantId(preselectedParticipant ? preselectedParticipant.id : null);
@@ -239,7 +282,7 @@ export default function App() {
           });
           showToast(`¡Abono registrado! ${traveler.name} quedó a paz y salvo 🎉`);
         } else {
-          showToast(`Abono registrado a ${traveler.name}.`);
+          showToast(`Abono de $${newPay.amount.toLocaleString('es-CO')} registrado a ${traveler.name}.`);
         }
       } else {
         showToast('Abono registrado con éxito.');
@@ -256,10 +299,11 @@ export default function App() {
     showToast('Abono eliminado.', 'info');
   };
 
+  // Reset / Clear Data
   const handleResetData = async () => {
     resetAllData();
     await apiResetData();
-    showToast('Datos restablecidos.');
+    showToast('Datos de ejemplo cargados.');
   };
 
   const handleClearData = async () => {
@@ -276,67 +320,88 @@ export default function App() {
     const s = loadTripSettings();
     const parts = loadParticipants();
     const pays = loadPayments();
+    await apiSaveAll({ settings: s, participants: parts, payments: pays });
     setSettings(s);
     setParticipants(parts);
     setPayments(pays);
-    await saveSettingsToFirestore(s);
-    for (const p of parts) await saveParticipantToFirestore(p);
-    for (const y of pays) await savePaymentToFirestore(y);
-    showToast('Datos importados y sincronizados.');
+    showToast('Datos importados y sincronizados con éxito.');
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-emerald-100 selection:text-emerald-900">
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl border border-slate-800 flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-200">
+          <div className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+            {toast.type === 'success' ? <Check className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+          </div>
+          <span className="text-xs sm:text-sm font-medium">{toast.message}</span>
+        </div>
+      )}
+
+      {/* Top Navbar */}
       <Navbar
         settings={settings}
         isAdmin={isAdmin}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
         onLoginClick={() => setIsLoginModalOpen(true)}
+        onLogout={handleLogout}
         onLogoutClick={handleLogout}
+        onOpenShare={() => setIsShareModalOpen(true)}
         onShareClick={() => setIsShareModalOpen(true)}
+        activeTab={activeTab}
+        onChangeTab={setActiveTab}
+        onTabChange={setActiveTab}
       />
 
-      <HeroBanner
-        settings={settings}
-        participants={participants}
-        payments={payments}
-        onShareClick={() => setIsShareModalOpen(true)}
-      />
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        {/* Hero Section with Global Stats */}
+        <HeroBanner
+          settings={settings}
+          participants={participants}
+          payments={payments}
+        />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* View Switcher: Public Board vs Admin Dashboard */}
         {activeTab === 'public' ? (
           <PublicBoard
             settings={settings}
             participants={participants}
             payments={payments}
-            onSelectParticipant={setSelectedParticipant}
+            isAdmin={isAdmin}
+            onSelectParticipant={(p) => setSelectedParticipant(p)}
+            onQuickAddPayment={(p) => handleOpenAddPayment(p)}
           />
         ) : (
           <AdminDashboard
             settings={settings}
             participants={participants}
             payments={payments}
-            onOpenSettings={() => setIsSettingsModalOpen(true)}
             onOpenAddParticipant={handleOpenAddParticipant}
             onOpenEditParticipant={handleOpenEditParticipant}
             onDeleteParticipant={handleDeleteParticipant}
             onOpenAddPayment={handleOpenAddPayment}
-            onOpenEditPayment={handleOpenEditPayment}
-            onDeletePayment={handleDeletePayment}
-            onSelectParticipant={setSelectedParticipant}
+            onOpenSettings={() => setIsSettingsModalOpen(true)}
+            onSelectParticipant={(p) => setSelectedParticipant(p)}
           />
         )}
       </main>
 
-      <footer className="bg-slate-900 text-slate-400 py-8 border-t border-slate-800 text-center text-sm">
-        <p className="font-semibold text-slate-300">{settings.title}</p>
-        <p className="mt-1 text-slate-500">
-          Tablero de control de abonos en tiempo real · Sincronizado en la nube
-        </p>
-      </footer>
+      {/* Modals */}
+      {/* 1. Participant Detail Modal */}
+      <ParticipantDetailModal
+        participant={selectedParticipant}
+        payments={payments}
+        settings={settings}
+        isAdmin={isAdmin}
+        onClose={() => setSelectedParticipant(null)}
+        onAddPaymentForParticipant={(p) => handleOpenAddPayment(p)}
+        onEditPayment={(pay) => handleOpenEditPayment(pay)}
+        onDeletePayment={handleDeletePayment}
+      />
 
-      {/* Modales */}
+      {/* 2. Admin Login Modal */}
       <AdminLoginModal
         isOpen={isLoginModalOpen}
         settings={settings}
@@ -345,6 +410,28 @@ export default function App() {
         onLoginSuccess={handleLoginSuccess}
       />
 
+      {/* 3. Payment Modal (Add / Edit) */}
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        onSave={handleSavePayment}
+        participants={participants}
+        payments={payments}
+        settings={settings}
+        editingPayment={editingPayment}
+        initialParticipantId={initialPaymentParticipantId}
+      />
+
+      {/* 4. Participant Modal (Add / Edit) */}
+      <ParticipantModal
+        isOpen={isParticipantModalOpen}
+        onClose={() => setIsParticipantModalOpen(false)}
+        onSave={handleSaveParticipant}
+        editingParticipant={editingParticipant}
+        settings={settings}
+      />
+
+      {/* 5. Trip Settings Modal */}
       <TripSettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
@@ -357,44 +444,13 @@ export default function App() {
         onDataImported={handleDataImported}
       />
 
-      <ParticipantModal
-        isOpen={isParticipantModalOpen}
-        onClose={() => setIsParticipantModalOpen(false)}
-        participant={editingParticipant}
-        defaultQuota={participants[0]?.quota || 450000}
-        currency={settings.currency}
-        onSave={handleSaveParticipant}
-      />
-
-      <PaymentModal
-        isOpen={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
-        payment={editingPayment}
-        participants={participants}
-        initialParticipantId={initialPaymentParticipantId}
-        currency={settings.currency}
-        onSave={handleSavePayment}
-      />
-
-      <ParticipantDetailModal
-        participant={selectedParticipant}
-        payments={payments}
-        settings={settings}
-        onClose={() => setSelectedParticipant(null)}
-        onAddPayment={() => {
-          const p = selectedParticipant;
-          setSelectedParticipant(null);
-          if (p) handleOpenAddPayment(p);
-        }}
-      />
-
-      {/* Modal de Compartir */}
+      {/* 6. Share Modal (Self-contained) */}
       {isShareModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 p-6 animate-in fade-in zoom-in-95 duration-200">
             <button
               onClick={() => setIsShareModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -424,7 +480,7 @@ export default function App() {
                       navigator.clipboard.writeText(window.location.href);
                       showToast('¡Enlace copiado al portapapeles!');
                     }}
-                    className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+                    className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center gap-1 shrink-0 transition-colors"
                   >
                     <Copy className="w-3.5 h-3.5" />
                     Copiar
@@ -437,7 +493,7 @@ export default function App() {
                   const text = encodeURIComponent(`¡Hola! Consulta el estado de tu cupo y abonos para "${settings.title}" en tiempo real aquí: ${window.location.href}`);
                   window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
                 }}
-                className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
+                className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors"
               >
                 <Share2 className="w-4 h-4" />
                 Compartir por WhatsApp
@@ -447,12 +503,17 @@ export default function App() {
         </div>
       )}
 
-      {toast && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-xl text-white text-sm font-medium animate-bounce bg-emerald-600">
-          <Check className="w-5 h-5" />
-          <span>{toast.message}</span>
+      {/* Minimal Footer */}
+      <footer className="mt-auto border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <p>
+            {settings.title} · Coordinado con <strong className="text-slate-700">PaseoManager</strong>
+          </p>
+          <div className="flex items-center gap-4 text-slate-400">
+            <span>Control centralizado y transparencia para todos los viajeros</span>
+          </div>
         </div>
-      )}
+      </footer>
     </div>
   );
 }
