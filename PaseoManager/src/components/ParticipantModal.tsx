@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, User, Phone, DollarSign, FileText, Check, ShieldAlert, CreditCard } from 'lucide-react';
+import { X, User, Phone, DollarSign, FileText, Check, CreditCard } from 'lucide-react';
 import { Participant, TripSettings } from '../types';
 import { formatMoney } from '../utils/storage';
 
@@ -38,6 +38,8 @@ export const ParticipantModal: React.FC<ParticipantModalProps> = ({
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!isOpen) return;
+
     if (editingParticipant) {
       setName(editingParticipant.name);
       setPhone(editingParticipant.phone || '');
@@ -105,7 +107,7 @@ export const ParticipantModal: React.FC<ParticipantModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Full Name */}
+          {/* Nombre y Apellidos */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
               <User className="w-3.5 h-3.5 text-emerald-600" />
@@ -121,7 +123,7 @@ export const ParticipantModal: React.FC<ParticipantModalProps> = ({
             />
           </div>
 
-          {/* Quota (Personalized value for this traveler) */}
+          {/* Cuota Asignada al Viajero */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
@@ -134,21 +136,48 @@ export const ParticipantModal: React.FC<ParticipantModalProps> = ({
                 </span>
               )}
             </div>
-            <input
-              type="number"
-              min="0"
-              step="5000"
-              value={quota}
-              onChange={(e) => setQuota(e.target.value === '' ? '' : Number(e.target.value))}
-              placeholder="Ej. 450000"
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 text-slate-900 text-base font-bold font-mono-numbers outline-none transition-all"
-            />
+            <div className="relative">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-base select-none">
+                {settings.currency}
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={quota !== '' ? Number(quota).toLocaleString('es-CO') : ''}
+                onChange={(e) => {
+                  const clean = e.target.value.replace(/\D/g, '');
+                  setQuota(clean === '' ? '' : parseInt(clean, 10));
+                }}
+                placeholder="450.000"
+                className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-300 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 text-slate-900 text-base font-bold font-mono-numbers outline-none transition-all placeholder:text-slate-300"
+              />
+            </div>
+            
+            {/* Cuotas sugeridas en 1 toque */}
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <span className="text-[11px] text-slate-400">Cuotas sugeridas:</span>
+              {[350000, 400000, 450000, 500000].map((presetVal) => (
+                <button
+                  key={presetVal}
+                  type="button"
+                  onClick={() => setQuota(presetVal)}
+                  className={`px-2 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                    quota === presetVal
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {formatMoney(presetVal, settings.currency)}
+                </button>
+              ))}
+            </div>
+
             <p className="text-[11px] text-slate-500 mt-1">
               Puedes definir una tarifa distinta si viaja con niño, pareja, habitación individual o sin transporte.
             </p>
           </div>
 
-          {/* Phone & Document ID */}
+          {/* Teléfono y Documento */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
@@ -179,7 +208,7 @@ export const ParticipantModal: React.FC<ParticipantModalProps> = ({
             </div>
           </div>
 
-          {/* Notes */}
+          {/* Notas */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
               <FileText className="w-3.5 h-3.5 text-emerald-600" />
@@ -194,7 +223,7 @@ export const ParticipantModal: React.FC<ParticipantModalProps> = ({
             />
           </div>
 
-          {/* Avatar Color Picker */}
+          {/* Color del Avatar */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
               Color de Identificación
@@ -219,7 +248,7 @@ export const ParticipantModal: React.FC<ParticipantModalProps> = ({
             </div>
           )}
 
-          {/* Actions */}
+          {/* Botones */}
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-3">
             <button
               type="button"
