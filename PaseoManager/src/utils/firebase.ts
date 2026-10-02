@@ -6,34 +6,26 @@ import {
   onSnapshot, 
   setDoc, 
   deleteDoc, 
-  getDocFromServer,
   getDocs,
   writeBatch
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
 import { Participant, Payment, TripSettings } from '../types';
-import { INITIAL_SETTINGS, INITIAL_PARTICIPANTS, INITIAL_PAYMENTS } from './storage';
+
+const firebaseConfig = {
+  projectId: "sistema-de-pedidos-7f91f",
+  appId: "1:611940942676:web:4d9a91ff2c69e811dabec1",
+  apiKey: "AIzaSyA8nsDapmnCRbcC1391giFerUMeVQt0g74",
+  authDomain: "sistema-de-pedidos-7f91f.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-paseomanager-1e8bf4a1-6d12-4861-b8d6-ca4c53be76dc",
+  storageBucket: "sistema-de-pedidos-7f91f.firebasestorage.app",
+  messagingSenderId: "611940942676"
+};
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  console.error(`Firestore Error [${operationType}] at ${path}:`, error);
-}
-
-// Sincronización en vivo para todos los viajeros
 export function subscribeToTripLive(
   onData: (data: {
     settings: TripSettings | null;
@@ -53,34 +45,20 @@ export function subscribeToTripLive(
     });
   };
 
-  const unsubSettings = onSnapshot(
-    doc(db, 'trip_settings', 'main'),
-    (snap) => {
-      if (snap.exists()) {
-        currentSettings = snap.data() as TripSettings;
-      }
-      triggerUpdate();
-    },
-    (err) => handleFirestoreError(err, OperationType.GET, 'trip_settings/main')
-  );
+  const unsubSettings = onSnapshot(doc(db, 'trip_settings', 'main'), (snap) => {
+    if (snap.exists()) currentSettings = snap.data() as TripSettings;
+    triggerUpdate();
+  });
 
-  const unsubParticipants = onSnapshot(
-    collection(db, 'participants'),
-    (snap) => {
-      currentParticipants = snap.docs.map((d) => d.data() as Participant);
-      triggerUpdate();
-    },
-    (err) => handleFirestoreError(err, OperationType.LIST, 'participants')
-  );
+  const unsubParticipants = onSnapshot(collection(db, 'participants'), (snap) => {
+    currentParticipants = snap.docs.map((d) => d.data() as Participant);
+    triggerUpdate();
+  });
 
-  const unsubPayments = onSnapshot(
-    collection(db, 'payments'),
-    (snap) => {
-      currentPayments = snap.docs.map((d) => d.data() as Payment);
-      triggerUpdate();
-    },
-    (err) => handleFirestoreError(err, OperationType.LIST, 'payments')
-  );
+  const unsubPayments = onSnapshot(collection(db, 'payments'), (snap) => {
+    currentPayments = snap.docs.map((d) => d.data() as Payment);
+    triggerUpdate();
+  });
 
   return () => {
     unsubSettings();
@@ -109,32 +87,11 @@ export async function deletePaymentFromFirestore(paymentId: string): Promise<voi
   await deleteDoc(doc(db, 'payments', paymentId));
 }
 
-export async function seedFirestoreIfEmpty(): Promise<boolean> {
-  try {
-    const settingsDoc = await getDocFromServer(doc(db, 'trip_settings', 'main'));
-    if (!settingsDoc.exists()) {
-      await setDoc(doc(db, 'trip_settings', 'main'), INITIAL_SETTINGS);
-      const batch = writeBatch(db);
-      for (const p of INITIAL_PARTICIPANTS) batch.set(doc(db, 'participants', p.id), p);
-      for (const y of INITIAL_PAYMENTS) batch.set(doc(db, 'payments', y.id), y);
-      await batch.commit();
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 export async function clearFirestoreData(): Promise<void> {
-  try {
-    const partsSnap = await getDocs(collection(db, 'participants'));
-    const paysSnap = await getDocs(collection(db, 'payments'));
-    const batch = writeBatch(db);
-    partsSnap.docs.forEach((d) => batch.delete(d.ref));
-    paysSnap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, 'clearAll');
-  }
+  const partsSnap = await getDocs(collection(db, 'participants'));
+  const paysSnap = await getDocs(collection(db, 'payments'));
+  const batch = writeBatch(db);
+  partsSnap.docs.forEach((d) => batch.delete(d.ref));
+  paysSnap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
 }
