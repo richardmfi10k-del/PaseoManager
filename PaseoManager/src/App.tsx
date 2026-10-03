@@ -3,8 +3,7 @@ import confetti from 'canvas-confetti';
 import { 
   TripSettings, 
   Participant, 
-  Payment,
-  Expense 
+  Payment 
 } from './types';
 import { 
   loadTripSettings, 
@@ -13,9 +12,6 @@ import {
   saveParticipants, 
   loadPayments, 
   savePayments, 
-  loadExpenses,
-  saveExpenses,
-  INITIAL_EXPENSES,
   checkAdminSession, 
   setAdminSession,
   resetAllData,
@@ -27,8 +23,6 @@ import {
   apiDeleteParticipant,
   apiSavePayment,
   apiDeletePayment,
-  apiSaveExpense,
-  apiDeleteExpense,
   apiSaveSettings,
   apiResetData,
   apiClearData,
@@ -41,10 +35,10 @@ import {
   deleteParticipantFromFirestore,
   savePaymentToFirestore,
   deletePaymentFromFirestore,
-  saveExpenseToFirestore,
-  deleteExpenseFromFirestore,
   clearFirestoreData,
+  db,
 } from './utils/firebase';
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { PublicBoard } from './components/PublicBoard';
@@ -57,15 +51,55 @@ import { TripSettingsModal } from './components/TripSettingsModal';
 import { ExpenseModal } from './components/ExpenseModal';
 import { Check, Info, Share2, Copy, X } from 'lucide-react';
 
+export type ExpenseCategory = 
+  | 'Hospedaje / Cabaña'
+  | 'Transporte / Gasolina'
+  | 'Alimentación / Bebidas'
+  | 'Actividades / Entradas'
+  | 'Logística / Imprevistos'
+  | 'Otro';
+
+export interface Expense {
+  id: string;
+  concept: string;
+  category: ExpenseCategory;
+  amount: number;
+  date: string;
+  paymentMethod: string;
+  paidTo?: string;
+  receiptNumber?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+const EXPENSES_STORAGE_KEY = 'paseomanager_expenses_v1';
+
+function getStoredExpenses(): Expense[] {
+  try {
+    const raw = localStorage.getItem(EXPENSES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeExpenses(data: Expense[]): void {
+  try {
+    localStorage.setItem(EXPENSES_STORAGE_KEY, JSON.stringify(data));
+  } catch {}
+}
+
 export default function App() {
   const [settings, setSettings] = useState<TripSettings>(loadTripSettings);
   const [participants, setParticipants] = useState<Participant[]>(loadParticipants);
   const [payments, setPayments] = useState<Payment[]>(loadPayments);
-  const [expenses, setExpenses] = useState<Expense[]>(loadExpenses);
+  const [expenses, setExpenses] = useState<Expense[]>(getStoredExpenses);
   const [isAdmin, setIsAdmin] = useState<boolean>(checkAdminSession);
   const [activeTab, setActiveTab] = useState<'public' | 'admin'>('public');
-  
-  // Pantalla de carga para evitar que nuevos usuarios vean datos vacíos o de prueba
+
+  // Pantalla de carga para evitar que nuevos visitantes vean la pantalla vacia mientras conecta Firebase
   const [isLoading, setIsLoading] = useState<boolean>(() => {
     const cached = loadParticipants();
     return cached.length === 0;
@@ -100,7 +134,7 @@ export default function App() {
       setIsLoading(false);
     }, 2000);
 
-    const unsubscribe = subscribeToTripLive((live) => {
+    const unsubscribe = subscribeToTripLive((live: any) => {
       setIsLoading(false);
       clearTimeout(timer);
       if (live.settings) {
@@ -115,9 +149,9 @@ export default function App() {
         setPayments(live.payments);
         savePayments(live.payments);
       }
-      if (Array.isArray(live.expenses)) {
+      if (Array.isArray(live.expenses) && live.expenses.length > 0) {
         setExpenses(live.expenses);
-        saveExpenses(live.expenses);
+        storeExpenses(live.expenses);
       }
     });
 
@@ -147,7 +181,7 @@ export default function App() {
 
   const updateExpenses = (newExpenses: Expense[]) => {
     setExpenses(newExpenses);
-    saveExpenses(newExpenses);
+    storeExpenses(newExpenses);
   };
 
   const handleLoginSuccess = () => {
@@ -288,6 +322,7 @@ export default function App() {
     showToast('Abono eliminado.', 'info');
   };
 
+  // Expense Management (Control Privado de Gastos)
   const handleOpenAddExpense = () => {
     setEditingExpense(null);
     setIsExpenseModalOpen(true);
@@ -304,17 +339,15 @@ export default function App() {
         e.id === data.id ? ({ ...e, ...data } as Expense) : e
       );
       updateExpenses(updated);
-      const target = updated.find((e) => e.id === data.id);
-      if (target) {
-        await saveExpenseToFirestore(target);
-        await apiSaveExpense(target);
-      }
+      try {
+        await setDoc(doc(db, 'expenses', data.id), data, { merge: true });
+      } catch {}
       showToast('Gasto modificado exitosamente.');
     } else {
       const newExp: Expense = {
         id: `exp-${Date.now()}`,
         concept: data.concept || 'Gasto no especificado',
-        category: data.category || 'Hospedaje / Cabaña',
+        category: (data.category as ExpenseCategory) || 'Hospedaje / Cabaña',
         amount: Number(data.amount) || 0,
         date: data.date || new Date().toISOString().split('T')[0],
         paymentMethod: data.paymentMethod || 'Nequi',
@@ -325,8 +358,9 @@ export default function App() {
       };
       const updated = [newExp, ...expenses];
       updateExpenses(updated);
-      await saveExpenseToFirestore(newExp);
-      await apiSaveExpense(newExp);
+      try {
+        await setDoc(doc(db, 'expenses', newExp.id), newExp);
+      } catch {}
       showToast(`Salida "${newExp.concept}" registrada en caja.`);
     }
     setIsExpenseModalOpen(false);
@@ -335,14 +369,16 @@ export default function App() {
   const handleDeleteExpense = async (expenseId: string) => {
     const updated = expenses.filter((e) => e.id !== expenseId);
     updateExpenses(updated);
-    await deleteExpenseFromFirestore(expenseId);
-    await apiDeleteExpense(expenseId);
+    try {
+      await deleteDoc(doc(db, 'expenses', expenseId));
+    } catch {}
     showToast('Salida eliminada.', 'info');
   };
 
   const handleResetData = async () => {
     resetAllData();
-    setExpenses(INITIAL_EXPENSES);
+    setExpenses([]);
+    storeExpenses([]);
     await apiResetData();
     showToast('Datos restablecidos.');
   };
@@ -352,6 +388,7 @@ export default function App() {
     setParticipants([]);
     setPayments([]);
     setExpenses([]);
+    storeExpenses([]);
     setSelectedParticipant(null);
     await clearFirestoreData();
     await apiClearData();
@@ -362,12 +399,10 @@ export default function App() {
     const s = loadTripSettings();
     const parts = loadParticipants();
     const pays = loadPayments();
-    const exps = loadExpenses();
-    await apiSaveAll({ settings: s, participants: parts, payments: pays, expenses: exps });
+    await apiSaveAll({ settings: s, participants: parts, payments: pays });
     setSettings(s);
     setParticipants(parts);
     setPayments(pays);
-    setExpenses(exps);
     showToast('Datos importados y sincronizados con éxito.');
   };
 
