@@ -3,7 +3,8 @@ import confetti from 'canvas-confetti';
 import { 
   TripSettings, 
   Participant, 
-  Payment 
+  Payment,
+  Expense 
 } from './types';
 import { 
   loadTripSettings, 
@@ -12,6 +13,9 @@ import {
   saveParticipants, 
   loadPayments, 
   savePayments, 
+  loadExpenses,
+  saveExpenses,
+  INITIAL_EXPENSES,
   checkAdminSession, 
   setAdminSession,
   resetAllData,
@@ -19,11 +23,12 @@ import {
   calculateFinancials,
 } from './utils/storage';
 import {
-  fetchTripData,
   apiSaveParticipant,
   apiDeleteParticipant,
   apiSavePayment,
   apiDeletePayment,
+  apiSaveExpense,
+  apiDeleteExpense,
   apiSaveSettings,
   apiResetData,
   apiClearData,
@@ -36,6 +41,8 @@ import {
   deleteParticipantFromFirestore,
   savePaymentToFirestore,
   deletePaymentFromFirestore,
+  saveExpenseToFirestore,
+  deleteExpenseFromFirestore,
   clearFirestoreData,
 } from './utils/firebase';
 import { Navbar } from './components/Navbar';
@@ -47,14 +54,22 @@ import { AdminLoginModal } from './components/AdminLoginModal';
 import { PaymentModal } from './components/PaymentModal';
 import { ParticipantModal } from './components/ParticipantModal';
 import { TripSettingsModal } from './components/TripSettingsModal';
+import { ExpenseModal } from './components/ExpenseModal';
 import { Check, Info, Share2, Copy, X } from 'lucide-react';
 
 export default function App() {
   const [settings, setSettings] = useState<TripSettings>(loadTripSettings);
   const [participants, setParticipants] = useState<Participant[]>(loadParticipants);
   const [payments, setPayments] = useState<Payment[]>(loadPayments);
+  const [expenses, setExpenses] = useState<Expense[]>(loadExpenses);
   const [isAdmin, setIsAdmin] = useState<boolean>(checkAdminSession);
   const [activeTab, setActiveTab] = useState<'public' | 'admin'>('public');
+  
+  // Pantalla de carga para evitar que nuevos usuarios vean datos vacíos o de prueba
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    const cached = loadParticipants();
+    return cached.length === 0;
+  });
 
   // Modals state
   const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
@@ -66,6 +81,10 @@ export default function App() {
   const [editingParticipant, setEditingParticipant] = useState<Participant | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  
+  // Expense Modal state
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   // Toast feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
@@ -77,7 +96,13 @@ export default function App() {
 
   // Real-time Firestore synchronization
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 2000);
+
     const unsubscribe = subscribeToTripLive((live) => {
+      setIsLoading(false);
+      clearTimeout(timer);
       if (live.settings) {
         setSettings(live.settings);
         saveTripSettings(live.settings);
@@ -90,12 +115,18 @@ export default function App() {
         setPayments(live.payments);
         savePayments(live.payments);
       }
+      if (Array.isArray(live.expenses)) {
+        setExpenses(live.expenses);
+        saveExpenses(live.expenses);
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
   }, []);
 
-  // Sync state changes with local & backend
   const updateSettings = async (newSettings: TripSettings) => {
     setSettings(newSettings);
     saveTripSettings(newSettings);
@@ -114,7 +145,11 @@ export default function App() {
     savePayments(newPayments);
   };
 
-  // Admin Auth Handlers
+  const updateExpenses = (newExpenses: Expense[]) => {
+    setExpenses(newExpenses);
+    saveExpenses(newExpenses);
+  };
+
   const handleLoginSuccess = () => {
     setIsAdmin(true);
     setAdminSession(true);
@@ -130,7 +165,6 @@ export default function App() {
     showToast('Sesión cerrada.', 'info');
   };
 
-  // Participant Management
   const handleOpenAddParticipant = () => {
     setEditingParticipant(null);
     setIsParticipantModalOpen(true);
@@ -185,7 +219,6 @@ export default function App() {
     showToast('Viajero y sus pagos eliminados.', 'info');
   };
 
-  // Payment Management
   const handleOpenAddPayment = (preselectedParticipant?: Participant) => {
     setEditingPayment(null);
     setInitialPaymentParticipantId(preselectedParticipant ? preselectedParticipant.id : null);
@@ -238,7 +271,7 @@ export default function App() {
           });
           showToast(`¡Abono registrado! ${traveler.name} quedó a paz y salvo 🎉`);
         } else {
-          showToast(`Abono de $${newPay.amount.toLocaleString('es-CO')} registrado a ${traveler.name}.`);
+          showToast(`Abono registrado a ${traveler.name}.`);
         }
       } else {
         showToast('Abono registrado con éxito.');
@@ -255,9 +288,61 @@ export default function App() {
     showToast('Abono eliminado.', 'info');
   };
 
-  // Reset / Clear Data
+  const handleOpenAddExpense = () => {
+    setEditingExpense(null);
+    setIsExpenseModalOpen(true);
+  };
+
+  const handleOpenEditExpense = (expense: Expense) => {
+    setEditingExpense(expense);
+    setIsExpenseModalOpen(true);
+  };
+
+  const handleSaveExpense = async (data: Partial<Expense>) => {
+    if (data.id) {
+      const updated = expenses.map((e) =>
+        e.id === data.id ? ({ ...e, ...data } as Expense) : e
+      );
+      updateExpenses(updated);
+      const target = updated.find((e) => e.id === data.id);
+      if (target) {
+        await saveExpenseToFirestore(target);
+        await apiSaveExpense(target);
+      }
+      showToast('Gasto modificado exitosamente.');
+    } else {
+      const newExp: Expense = {
+        id: `exp-${Date.now()}`,
+        concept: data.concept || 'Gasto no especificado',
+        category: data.category || 'Hospedaje / Cabaña',
+        amount: Number(data.amount) || 0,
+        date: data.date || new Date().toISOString().split('T')[0],
+        paymentMethod: data.paymentMethod || 'Nequi',
+        paidTo: data.paidTo || '',
+        receiptNumber: data.receiptNumber || '',
+        notes: data.notes || '',
+        createdAt: new Date().toISOString(),
+      };
+      const updated = [newExp, ...expenses];
+      updateExpenses(updated);
+      await saveExpenseToFirestore(newExp);
+      await apiSaveExpense(newExp);
+      showToast(`Salida "${newExp.concept}" registrada en caja.`);
+    }
+    setIsExpenseModalOpen(false);
+  };
+
+  const handleDeleteExpense = async (expenseId: string) => {
+    const updated = expenses.filter((e) => e.id !== expenseId);
+    updateExpenses(updated);
+    await deleteExpenseFromFirestore(expenseId);
+    await apiDeleteExpense(expenseId);
+    showToast('Salida eliminada.', 'info');
+  };
+
   const handleResetData = async () => {
     resetAllData();
+    setExpenses(INITIAL_EXPENSES);
     await apiResetData();
     showToast('Datos restablecidos.');
   };
@@ -266,6 +351,7 @@ export default function App() {
     clearData();
     setParticipants([]);
     setPayments([]);
+    setExpenses([]);
     setSelectedParticipant(null);
     await clearFirestoreData();
     await apiClearData();
@@ -276,12 +362,32 @@ export default function App() {
     const s = loadTripSettings();
     const parts = loadParticipants();
     const pays = loadPayments();
-    await apiSaveAll({ settings: s, participants: parts, payments: pays });
+    const exps = loadExpenses();
+    await apiSaveAll({ settings: s, participants: parts, payments: pays, expenses: exps });
     setSettings(s);
     setParticipants(parts);
     setPayments(pays);
+    setExpenses(exps);
     showToast('Datos importados y sincronizados con éxito.');
   };
+
+  // Pantalla de carga si un usuario entra por primera vez
+  if (isLoading && participants.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-center select-none">
+        <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-5 animate-pulse shadow-xl shadow-emerald-500/10">
+          <div className="w-8 h-8 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+        </div>
+        <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Cargando Paseo...</h2>
+        <p className="text-xs sm:text-sm text-slate-400 mt-2 max-w-xs">
+          Sincronizando la lista oficial y abonos en tiempo real
+        </p>
+        <div className="mt-6 w-36 h-1 bg-slate-800 rounded-full overflow-hidden">
+          <div className="h-full bg-emerald-500 rounded-full w-2/3 animate-pulse" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-emerald-100 selection:text-emerald-900">
@@ -312,14 +418,12 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Hero Section with Global Stats */}
         <HeroBanner
           settings={settings}
           participants={participants}
           payments={payments}
         />
 
-        {/* View Switcher: Public Board vs Admin Dashboard */}
         {activeTab === 'public' ? (
           <PublicBoard
             settings={settings}
@@ -334,10 +438,14 @@ export default function App() {
             settings={settings}
             participants={participants}
             payments={payments}
+            expenses={expenses}
             onOpenAddParticipant={handleOpenAddParticipant}
             onOpenEditParticipant={handleOpenEditParticipant}
             onDeleteParticipant={handleDeleteParticipant}
             onOpenAddPayment={handleOpenAddPayment}
+            onOpenAddExpense={handleOpenAddExpense}
+            onOpenEditExpense={handleOpenEditExpense}
+            onDeleteExpense={handleDeleteExpense}
             onOpenSettings={() => setIsSettingsModalOpen(true)}
             onSelectParticipant={(p) => setSelectedParticipant(p)}
           />
@@ -345,7 +453,6 @@ export default function App() {
       </main>
 
       {/* Modals */}
-      {/* 1. Participant Detail Modal */}
       <ParticipantDetailModal
         participant={selectedParticipant}
         payments={payments}
@@ -357,7 +464,6 @@ export default function App() {
         onDeletePayment={handleDeletePayment}
       />
 
-      {/* 2. Admin Login Modal */}
       <AdminLoginModal
         isOpen={isLoginModalOpen}
         settings={settings}
@@ -366,7 +472,6 @@ export default function App() {
         onLoginSuccess={handleLoginSuccess}
       />
 
-      {/* 3. Payment Modal (Add / Edit) */}
       <PaymentModal
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
@@ -378,7 +483,6 @@ export default function App() {
         initialParticipantId={initialPaymentParticipantId}
       />
 
-      {/* 4. Participant Modal (Add / Edit) */}
       <ParticipantModal
         isOpen={isParticipantModalOpen}
         onClose={() => setIsParticipantModalOpen(false)}
@@ -387,7 +491,14 @@ export default function App() {
         settings={settings}
       />
 
-      {/* 5. Trip Settings Modal */}
+      <ExpenseModal
+        isOpen={isExpenseModalOpen}
+        onClose={() => setIsExpenseModalOpen(false)}
+        onSave={handleSaveExpense}
+        expense={editingExpense}
+        currency={settings.currency}
+      />
+
       <TripSettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
@@ -400,13 +511,12 @@ export default function App() {
         onDataImported={handleDataImported}
       />
 
-      {/* 6. Share Modal (Self-contained) */}
       {isShareModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 p-6 animate-in fade-in zoom-in-95 duration-200">
             <button
               onClick={() => setIsShareModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -459,7 +569,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Minimal Footer */}
+      {/* Footer */}
       <footer className="mt-auto border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p>
