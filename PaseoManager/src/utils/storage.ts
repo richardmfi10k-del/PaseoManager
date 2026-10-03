@@ -162,9 +162,9 @@ export function formatDate(dateStr?: string): string {
     const parts = dateStr.split('-');
     if (parts.length === 3) {
       const year = parseInt(parts[0], 10);
-      const monthIndex = parseInt(parts[1], 10) - 1;
+      const month = parseInt(parts[1], 10) - 1;
       const day = parseInt(parts[2], 10);
-      const d = new Date(year, monthIndex, day);
+      const d = new Date(year, month, day);
       return d.toLocaleDateString('es-CO', {
         day: 'numeric',
         month: 'short',
@@ -192,6 +192,29 @@ export function clearData(): void {
   saveParticipants([]);
   savePayments([]);
   saveExpenses([]);
+}
+
+export function exportFullDataJSON(): string {
+  const settings = loadTripSettings();
+  const participants = loadParticipants();
+  const payments = loadPayments();
+  const expenses = loadExpenses();
+  return JSON.stringify({ settings, participants, payments, expenses, exportedAt: new Date().toISOString() }, null, 2);
+}
+
+export function importFullDataJSON(jsonStr: string): boolean {
+  try {
+    const data = JSON.parse(jsonStr);
+    if (!data || (!data.settings && !data.participants)) return false;
+    if (data.settings) saveTripSettings(data.settings);
+    if (Array.isArray(data.participants)) saveParticipants(data.participants);
+    if (Array.isArray(data.payments)) savePayments(data.payments);
+    if (Array.isArray(data.expenses)) saveExpenses(data.expenses);
+    return true;
+  } catch (err) {
+    console.error('Error importing backup JSON', err);
+    return false;
+  }
 }
 
 export function generateCSVReport(
@@ -291,4 +314,152 @@ export function generateCSVReport(
   });
 
   return BOM + lines.join('\n');
+}
+
+export function exportTripPayload(settings: TripSettings, participants: Participant[], payments: Payment[]): string {
+  const compact = {
+    s: {
+      t: settings.title,
+      d: settings.destination,
+      dd: settings.departureDate,
+      rd: settings.returnDate,
+      c: settings.currency,
+      on: settings.organizerName,
+      op: settings.organizerPhone,
+      oa: settings.organizerAccountInfo,
+      desc: settings.description,
+    },
+    p: participants.map((p) => ({
+      i: p.id,
+      n: p.name,
+      ph: p.phone,
+      doc: p.documentId,
+      q: p.quota,
+      nt: p.notes,
+      col: p.avatarColor,
+    })),
+    y: payments.map((y) => ({
+      i: y.id,
+      pi: y.participantId,
+      a: y.amount,
+      d: y.date,
+      m: y.method,
+      r: y.reference,
+      n: y.notes,
+    })),
+  };
+
+  const jsonStr = JSON.stringify(compact);
+  const utf8Bytes = new TextEncoder().encode(jsonStr);
+  let binary = '';
+  for (let i = 0; i < utf8Bytes.length; i++) {
+    binary += String.fromCharCode(utf8Bytes[i]);
+  }
+  return btoa(binary);
+}
+
+export function importTripPayload(encoded: string): {
+  settings?: Partial<TripSettings>;
+  participants?: Participant[];
+  payments?: Payment[];
+} | null {
+  try {
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const jsonStr = new TextDecoder().decode(bytes);
+    const compact = JSON.parse(jsonStr);
+
+    const settings: Partial<TripSettings> = compact.s
+      ? {
+          title: compact.s.t,
+          destination: compact.s.d,
+          departureDate: compact.s.dd,
+          returnDate: compact.s.rd,
+          currency: compact.s.c || '$',
+          organizerName: compact.s.on,
+          organizerPhone: compact.s.op,
+          organizerAccountInfo: compact.s.oa,
+          description: compact.s.desc,
+        }
+      : {};
+
+    const participants: Participant[] = (compact.p || []).map((p: any) => ({
+      id: p.i,
+      name: p.n,
+      phone: p.ph || '',
+      documentId: p.doc || '',
+      quota: p.q,
+      notes: p.nt || '',
+      avatarColor: p.col,
+      createdAt: new Date().toISOString(),
+    }));
+
+    const payments: Payment[] = (compact.y || []).map((y: any) => ({
+      id: y.i,
+      participantId: y.pi,
+      amount: y.a,
+      date: y.d,
+      method: y.m,
+      reference: y.r || '',
+      notes: y.n || '',
+      createdAt: new Date().toISOString(),
+    }));
+
+    return { settings, participants, payments };
+  } catch (err) {
+    console.error('Failed to import payload from URL', err);
+    return null;
+  }
+}
+
+export function generateShareUrl(settings: TripSettings, participants: Participant[], payments: Payment[]): string {
+  try {
+    const payload = exportTripPayload(settings, participants, payments);
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const path = typeof window !== 'undefined' ? window.location.pathname : '';
+    return `${origin}${path}#trip=${payload}`;
+  } catch {
+    return typeof window !== 'undefined' ? window.location.href : '';
+  }
+}
+
+export function generateWhatsAppSummary(
+  settings: TripSettings,
+  participants: Participant[],
+  payments: Payment[],
+  url: string
+): string {
+  const totalTarget = participants.reduce((acc, p) => acc + p.quota, 0);
+  const totalPaid = payments.reduce((acc, y) => acc + y.amount, 0);
+  const percent = totalTarget > 0 ? Math.round((totalPaid / totalTarget) * 100) : 0;
+
+  return `🌴 *${settings.title}*
+📍 *Destino:* ${settings.destination}
+📅 *Salida:* ${settings.departureDate} ${settings.returnDate ? `· *Regreso:* ${settings.returnDate}` : ''}
+👤 *Organizador:* ${settings.organizerName} (${settings.organizerPhone})
+
+📊 *Estado del Paseo:*
+👥 *Viajeros:* ${participants.length} inscritos
+💰 *Total Recaudado:* ${formatMoney(totalPaid, settings.currency)} de ${formatMoney(totalTarget, settings.currency)} (${percent}%)
+
+📲 *Consulta tu saldo y pagos registrados aquí:*
+👉 ${url}
+
+💳 *Cuentas para abonos:*
+${settings.organizerAccountInfo || 'Consultar con el organizador'}`;
+}
+
+export function generateGitHubStorageCode(
+  settings: TripSettings,
+  participants: Participant[],
+  payments: Payment[]
+): string {
+  return `export const INITIAL_SETTINGS: TripSettings = ${JSON.stringify(settings, null, 2)};
+
+export const INITIAL_PARTICIPANTS: Participant[] = ${JSON.stringify(participants, null, 2)};
+
+export const INITIAL_PAYMENTS: Payment[] = ${JSON.stringify(payments, null, 2)};`;
 }
