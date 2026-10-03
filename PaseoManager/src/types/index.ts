@@ -2,6 +2,7 @@ export type PaymentMethod =
   | 'Nequi'
   | 'Daviplata'
   | 'Efectivo'
+  | 'NU'
   | 'Transferencia Bancaria'
   | 'Tarjeta / Otro';
 
@@ -12,6 +13,27 @@ export interface Payment {
   date: string;
   method: PaymentMethod;
   reference?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export type ExpenseCategory = 
+  | 'Hospedaje / Cabaña'
+  | 'Transporte / Gasolina'
+  | 'Alimentación / Bebidas'
+  | 'Actividades / Entradas'
+  | 'Logística / Imprevistos'
+  | 'Otro';
+
+export interface Expense {
+  id: string;
+  concept: string;
+  category: ExpenseCategory;
+  amount: number;
+  date: string;
+  paymentMethod: PaymentMethod;
+  paidTo?: string;
+  receiptNumber?: string;
   notes?: string;
   createdAt: string;
 }
